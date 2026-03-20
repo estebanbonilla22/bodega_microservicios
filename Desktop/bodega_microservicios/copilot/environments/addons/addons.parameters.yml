@@ -1,0 +1,7 @@
+# Referencias al stack del entorno Copilot (VPC/subnets/SG creados por copilot env deploy).
+# Requiere VPC administrada por Copilot (no importada) con al menos 2 subnets privadas.
+Parameters:
+  VpcId: !Ref VPC
+  PrivateSubnet1: !Ref PrivateSubnet1
+  PrivateSubnet2: !Ref PrivateSubnet2
+  EnvironmentSecurityGroup: !Ref EnvironmentSecurityGroup

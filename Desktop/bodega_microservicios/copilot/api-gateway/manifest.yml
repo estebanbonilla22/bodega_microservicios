@@ -1,0 +1,24 @@
+name: api-gateway
+type: Load Balanced Web Service
+
+image:
+  build:
+    dockerfile: api-gateway/Dockerfile
+    context: .
+  port: 8080
+
+http:
+  path: '/'
+  healthcheck: '/actuator/health'
+
+network:
+  connect: true
+  vpc:
+    placement: 'private'
+
+cpu: 512
+memory: 1024
+count: 1
+
+variables:
+  EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka/

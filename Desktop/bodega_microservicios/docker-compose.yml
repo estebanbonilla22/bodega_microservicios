@@ -1,0 +1,238 @@
+# Bodega stack — red interna `bodega`, Postgres por servicio, healthchecks en cadena.
+# Orden de arranque (depends_on + condition: service_healthy):
+#   1) auth-db, catalog-db, inventory-db, dispatch-db (Postgres, en paralelo)
+#   2) discovery-service (Eureka)
+#   3) auth-service + catalog-service (en paralelo, cada uno con su DB)
+#   4) inventory-service (tras catalog-service + su DB)
+#   5) dispatch-service (tras inventory-service + su DB)
+#   6) api-gateway (tras el resto de microservicios)
+#
+# Cliente HTTP: http://localhost:8080 (api-gateway)
+
+networks:
+  bodega:
+    driver: bridge
+
+volumes:
+  auth_db_data:
+  catalog_db_data:
+  inventory_db_data:
+  dispatch_db_data:
+
+services:
+  auth-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    networks: [bodega]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  catalog-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: catalog_db
+      POSTGRES_USER: catalog_user
+      POSTGRES_PASSWORD: catalog_pass
+    volumes:
+      - catalog_db_data:/var/lib/postgresql/data
+    networks: [bodega]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog_user -d catalog_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  inventory-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: inventory_db
+      POSTGRES_USER: inventory_user
+      POSTGRES_PASSWORD: inventory_pass
+    volumes:
+      - inventory_db_data:/var/lib/postgresql/data
+    networks: [bodega]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory_user -d inventory_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  dispatch-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dispatch_db
+      POSTGRES_USER: dispatch_user
+      POSTGRES_PASSWORD: dispatch_pass
+    volumes:
+      - dispatch_db_data:/var/lib/postgresql/data
+    networks: [bodega]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dispatch_user -d dispatch_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  discovery-service:
+    build:
+      context: .
+      dockerfile: discovery-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8761:8761"
+    networks: [bodega]
+    environment:
+      EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka/
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8761/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    networks: [bodega]
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      auth-db:
+        condition: service_healthy
+    environment:
+      EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka/
+      SPRING_DATASOURCE_URL: jdbc:postgresql://auth-db:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: auth_user
+      SPRING_DATASOURCE_PASSWORD: auth_pass
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  catalog-service:
+    build:
+      context: .
+      dockerfile: catalog-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    networks: [bodega]
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      catalog-db:
+        condition: service_healthy
+    environment:
+      EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka/
+      SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-db:5432/catalog_db
+      SPRING_DATASOURCE_USERNAME: catalog_user
+      SPRING_DATASOURCE_PASSWORD: catalog_pass
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8082/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: inventory-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    networks: [bodega]
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      inventory-db:
+        condition: service_healthy
+    environment:
+      EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka/
+      SPRING_DATASOURCE_URL: jdbc:postgresql://inventory-db:5432/inventory_db
+      SPRING_DATASOURCE_USERNAME: inventory_user
+      SPRING_DATASOURCE_PASSWORD: inventory_pass
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8083/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  dispatch-service:
+    build:
+      context: .
+      dockerfile: dispatch-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    networks: [bodega]
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      dispatch-db:
+        condition: service_healthy
+    environment:
+      EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka/
+      SPRING_DATASOURCE_URL: jdbc:postgresql://dispatch-db:5432/dispatch_db
+      SPRING_DATASOURCE_USERNAME: dispatch_user
+      SPRING_DATASOURCE_PASSWORD: dispatch_pass
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8084/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks: [bodega]
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      dispatch-service:
+        condition: service_healthy
+    environment:
+      EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka/
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s

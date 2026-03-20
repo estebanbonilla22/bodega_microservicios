@@ -1,0 +1,6 @@
+# Entorno de ejemplo. Ajusta nombre al crear el env con: copilot env init
+name: dev
+type: Environment
+
+observability:
+  container_insights: false

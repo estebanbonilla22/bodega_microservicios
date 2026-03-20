@@ -1,0 +1,119 @@
+Parameters:
+  App:
+    Type: String
+  Env:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+  EnvironmentSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+
+Resources:
+  BodegaPostgresSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub Postgres compartido (${App}-${Env}) — crear auth_db, catalog_db, inventory_db, dispatch_db
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${App}-${Env}-bodega-pg-subnets
+
+  BodegaPostgresSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Postgres solo desde workloads ${App}-${Env}
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EnvironmentSecurityGroup
+          Description: ECS/Fargate tasks en el entorno Copilot
+      Tags:
+        - Key: Name
+          Value: !Sub ${App}-${Env}-bodega-pg-sg
+
+  # Nombre estable para referenciar en manifests Copilot: secretsmanager: '${App}-${Env}-bodega-pg-master:password::'
+  BodegaDbMasterSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${App}-${Env}-bodega-pg-master
+      Description: !Sub Usuario maestro RDS compartido (${App}-${Env})
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"bodegaadmin"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+        ExcludePunctuation: true
+      Tags:
+        - Key: copilot-application
+          Value: !Ref App
+        - Key: copilot-environment
+          Value: !Ref Env
+
+  BodegaPostgres:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    DependsOn: BodegaDbMasterSecret
+    Properties:
+      DBInstanceIdentifier: !Sub copilot-${App}-${Env}-bodega-pg
+      Engine: postgres
+      EngineVersion: '16'
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: 20
+      MaxAllocatedStorage: 100
+      StorageType: gp3
+      MasterUsername: bodegaadmin
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${BodegaDbMasterSecret}:SecretString:password}}'
+      VPCSecurityGroups:
+        - !Ref BodegaPostgresSecurityGroup
+      DBSubnetGroupName: !Ref BodegaPostgresSubnetGroup
+      BackupRetentionPeriod: 7
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${App}-${Env}-bodega-pg
+
+Outputs:
+  BodegaPostgresEndpoint:
+    Description: Hostname RDS (crea las 4 bases antes de desplegar los microservicios)
+    Value: !GetAtt BodegaPostgres.Endpoint.Address
+    Export:
+      Name: !Sub ${App}-${Env}-BodegaPostgresEndpoint
+
+  BodegaPostgresPort:
+    Description: Puerto PostgreSQL
+    Value: !GetAtt BodegaPostgres.Endpoint.Port
+    Export:
+      Name: !Sub ${App}-${Env}-BodegaPostgresPort
+
+  BodegaJdbcAuthDb:
+    Description: JDBC para auth_db
+    Value: !Sub 'jdbc:postgresql://${BodegaPostgres.Endpoint.Address}:${BodegaPostgres.Endpoint.Port}/auth_db'
+    Export:
+      Name: !Sub ${App}-${Env}-BodegaJdbcAuthDb
+
+  BodegaJdbcCatalogDb:
+    Description: JDBC para catalog_db
+    Value: !Sub 'jdbc:postgresql://${BodegaPostgres.Endpoint.Address}:${BodegaPostgres.Endpoint.Port}/catalog_db'
+    Export:
+      Name: !Sub ${App}-${Env}-BodegaJdbcCatalogDb
+
+  BodegaJdbcInventoryDb:
+    Description: JDBC para inventory_db
+    Value: !Sub 'jdbc:postgresql://${BodegaPostgres.Endpoint.Address}:${BodegaPostgres.Endpoint.Port}/inventory_db'
+    Export:
+      Name: !Sub ${App}-${Env}-BodegaJdbcInventoryDb
+
+  BodegaJdbcDispatchDb:
+    Description: JDBC para dispatch_db
+    Value: !Sub 'jdbc:postgresql://${BodegaPostgres.Endpoint.Address}:${BodegaPostgres.Endpoint.Port}/dispatch_db'
+    Export:
+      Name: !Sub ${App}-${Env}-BodegaJdbcDispatchDb

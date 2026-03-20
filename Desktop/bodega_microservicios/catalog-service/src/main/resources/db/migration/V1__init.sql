@@ -1,0 +1,22 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS products (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sku TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'NORMAL',
+  unit TEXT NOT NULL DEFAULT 'UN',
+  active BOOLEAN NOT NULL DEFAULT true,
+  category_id UUID REFERENCES categories(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO categories (name) VALUES ('General')
+ON CONFLICT (name) DO NOTHING;
+
